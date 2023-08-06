@@ -1,21 +1,65 @@
 import streamlit as st
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from sklearn.datasets import make_moons, make_circles, make_classification
-from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, PolynomialFeatures
-from sklearn.metrics import accuracy_score
-from sklearn.pipeline import Pipeline
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.preprocessing import StandardScaler
+import tensorflow as tf
+import numpy as np
+
+class MCDropout(tf.keras.layers.Dropout):
+  def call(self, inputs):
+    return super().call(inputs, training=True)
+
+class NeuralNetwork:
+	def __init__(self, hidden_layers, learning_rate, batch_size, epochs, input_size, mc_dropout=False, dropout_rate=0.2):
+		self.hidden_layers = hidden_layers
+		self.learning_rate = learning_rate
+		self.batch_size = batch_size
+		self.epochs = epochs
+		self.mc_dropout = mc_dropout
+		self.input_size = input_size
+		self.output_size = 2
+		self.dropout_rate = dropout_rate
+		# self.activation = activation
+		self.model = self._build_model()
+
+	def _build_model(self):
+		model = tf.keras.Sequential()
+		model.add(tf.keras.layers.InputLayer(input_shape=(self.input_size,)))
+		print(self.mc_dropout)
+		for neurons in self.hidden_layers:
+			model.add(tf.keras.layers.Dense(neurons, activation='relu'))
+			if self.mc_dropout:
+				model.add(MCDropout(self.dropout_rate))  # You can tune the dropout rate here
+
+		model.add(tf.keras.layers.Dense(self.output_size, activation='softmax'))
+		model.compile(
+			optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate),
+			loss='sparse_categorical_crossentropy',
+			metrics=['accuracy']
+		)
+		return model
+
+	def train(self, x_train, y_train):
+		history = self.model.fit(
+			x_train, y_train,
+			batch_size=self.batch_size,
+			epochs=self.epochs,
+			validation_split=0.1
+		)
+		return history
+
+	def test(self, x_test, y_test):
+		loss, accuracy = self.model.evaluate(x_test, y_test)
+		return loss, accuracy
 
 # Create some datasets
 datasets = {
-	'Circles': make_circles(n_samples=500, noise=0.1, factor=0.5, random_state=42),
-	'Moons': make_moons(noise=0, random_state=42),
-	'Linearly Separable': make_classification(n_features=2, n_redundant=0, n_informative=2, n_clusters_per_class=1, random_state=42)
+	'Circles': make_circles(n_samples=400, noise=0.1, factor=0.5, random_state=42),
+	'Moons': make_moons(n_samples=400, noise=0.1, random_state=42),
+	'Linearly Separable': make_classification(n_samples=400, n_features=2, n_redundant=0, n_informative=2, n_clusters_per_class=1, random_state=42)
 }
 
 # Custom basis functions
@@ -57,15 +101,20 @@ def main():
 	layer_sizes = [int(neurons) for neurons in layer_sizes.split(",")]
 	
 	learning_rate = st.sidebar.slider("Learning Rate", 0.001, 0.1, 0.01, 0.001)
-	epochs = st.sidebar.slider("Epochs", 10, 500, 100, 10)
+	epochs = st.sidebar.slider("Epochs", 10, 500, 40, 10)
 	batch_size = st.sidebar.slider("Batch Size", 1, 30, 10, 1)
 	test_size = st.sidebar.slider("Test Size", 0.0, 1.0, 0.2, 0.05)
+	mc_dropout = st.sidebar.checkbox("MC Dropout", value=False)
+	dropout_val = 0.2
+	if mc_dropout:
+		dropout_val = st.sidebar.slider("Dropout", 0.0, 0.5, 0.2, 0.05)
 
 
-	activation = st.sidebar.selectbox("Activation Function", ["tanh", "relu", "logistic"])
+	# activation = st.sidebar.selectbox("Activation Function", ["tanh", "relu", "logistic"])
 	
+	trainBtn = st.sidebar.button("Train Model")
 	# Button to start training
-	if st.sidebar.button("Train Model"):
+	if trainBtn:
 		basis = [basis_functions[basis] for basis in selected_basis  if basis != "Gaussian"]
 		X = np.array([basis_function(X_init) for basis_function in basis]).T
 		if "Gaussian" in selected_basis:
@@ -77,10 +126,18 @@ def main():
 
 		# X = np.concatenate([basis_function(X_init) for basis_function in basis], axis=0)
 		print(X.shape)
-		# Train the neural network
-		model = MLPClassifier(hidden_layer_sizes=layer_sizes, max_iter=epochs, learning_rate_init=learning_rate, activation=activation, solver="adam", batch_size=batch_size, shuffle=True, random_state=42)
+		model = NeuralNetwork(hidden_layers=layer_sizes, learning_rate=learning_rate, batch_size=batch_size, epochs=epochs, input_size=X.shape[1], mc_dropout=mc_dropout, dropout_rate=dropout_val)
 		X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
-		model.fit(X_train, y_train)
+		history = model.train(X_train, y_train)
+		loss, accuracy = model.test(X_test, y_test)
+		st.write(f"Accuracy: {accuracy:.2f}")
+		st.write(f"Loss: {loss:.2f}")
+
+		
+		# Train the neural network
+		# model = MLPClassifier(hidden_layer_sizes=layer_sizes, max_iter=epochs, learning_rate_init=learning_rate, activation=activation, solver="adam", batch_size=batch_size, shuffle=True, random_state=42)
+		# X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
+		# model.fit(X_train, y_train)
 				
 		
 		# Make predictions on a grid
@@ -94,8 +151,11 @@ def main():
 			X_contour = np.concatenate([X_contour, temp], axis=1)
 		X_contour = stdScale.transform(X_contour)
 		print(X_contour.shape)
-		Z = model.predict_proba(X_contour)
-		Z = Z[:, 1].reshape(xx.shape)
+		# Z = model.model.predict(X_contour)
+		Z = np.array([model.model(X_contour, training=True).numpy()[:,1] for _ in range(30)]).T.mean(axis=1)
+		print(Z.shape)
+		# Z = np.hstack([model.model(X_contour, training=True) for _ in range(30)]).mean(axis=1)
+		Z = Z.reshape(xx.shape)
 		
 		# Plot the contour
 		st.write(f"### Dataset: {dataset_name}")
@@ -107,18 +167,34 @@ def main():
 		plt.title('Probability Contour')
 		st.pyplot(plt)
 		
-		# Show accuracy
-		y_pred = model.predict(X_test)
-		accuracy = accuracy_score(y_test, y_pred)
-		st.write(f"Accuracy: {accuracy:.2f}")
-
 		# Print model weights and intercepts
-		st.write("### Model Weights")
-		for i, (weight, intercept) in enumerate(zip(model.coefs_, model.intercepts_)):
-			st.write(f"Layer {i+1}:")
-			st.write(weight)
-			st.write(intercept)
-			st.write("")
+		st.write("Model Weights:")
+		for layer in model.model.layers:
+			if hasattr(layer, 'weights') and layer.weights:  # Check if the layer has weights and they are not empty
+				weights = layer.get_weights()[0]
+				st.write(f"Weights shape for Layer {layer.name}: {weights.shape}")
+				st.write(weights)
+
+			if hasattr(layer, 'bias') and layer.weights:  # Check if the layer has biases and they are not empty
+				bias = layer.get_weights()[1]
+				st.write(f"Bias shape for Layer {layer.name}: {bias.shape}")
+				st.write(bias)
+
+			# if isinstance(layer, tf.keras.layers.Dropout):  # Handle dropout layers separately
+				# st.write(f"Dropout rate for Layer {layer.name}: {layer.rate}")
+
+
+		# Show accuracy
+		# y_pred = model.predict(X_test)
+		# accuracy = accuracy_score(y_test, y_pred)
+		# st.write(f"Accuracy: {accuracy:.2f}")
+
+		# st.write("### Model Weights")
+		# for i, (weight, intercept) in enumerate(zip(model.coefs_, model.intercepts_)):
+		# 	st.write(f"Layer {i+1}:")
+		# 	st.write(weight)
+		# 	st.write(intercept)
+		# 	st.write("")
 
 if __name__ == "__main__":
 	main()
