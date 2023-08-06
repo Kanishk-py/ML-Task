@@ -13,7 +13,7 @@ class MCDropout(tf.keras.layers.Dropout):
     return super().call(inputs, training=True)
 
 class NeuralNetwork:
-	def __init__(self, hidden_layers, learning_rate, batch_size, epochs, input_size, mc_dropout=False, dropout_rate=0.2):
+	def __init__(self, hidden_layers, learning_rate, batch_size, epochs, input_size, activation, mc_dropout=False, dropout_rate=0.2):
 		self.hidden_layers = hidden_layers
 		self.learning_rate = learning_rate
 		self.batch_size = batch_size
@@ -22,17 +22,17 @@ class NeuralNetwork:
 		self.input_size = input_size
 		self.output_size = 2
 		self.dropout_rate = dropout_rate
-		# self.activation = activation
+		self.activation = activation
 		self.model = self._build_model()
 
 	def _build_model(self):
 		model = tf.keras.Sequential()
 		model.add(tf.keras.layers.InputLayer(input_shape=(self.input_size,)))
-		print(self.mc_dropout)
+		
 		for neurons in self.hidden_layers:
-			model.add(tf.keras.layers.Dense(neurons, activation='relu'))
+			model.add(tf.keras.layers.Dense(neurons, activation=self.activation))
 			if self.mc_dropout:
-				model.add(MCDropout(self.dropout_rate))  # You can tune the dropout rate here
+				model.add(MCDropout(self.dropout_rate))
 
 		model.add(tf.keras.layers.Dense(self.output_size, activation='softmax'))
 		model.compile(
@@ -55,14 +55,14 @@ class NeuralNetwork:
 		loss, accuracy = self.model.evaluate(x_test, y_test)
 		return loss, accuracy
 
-# Create some datasets
+# Create some Datasets
 datasets = {
 	'Circles': make_circles(n_samples=400, noise=0.1, factor=0.5, random_state=42),
 	'Moons': make_moons(n_samples=400, noise=0.1, random_state=42),
 	'Linearly Separable': make_classification(n_samples=400, n_features=2, n_redundant=0, n_informative=2, n_clusters_per_class=1, random_state=42)
 }
 
-# Custom basis functions
+# Custom basis transformation functions
 def polyTransform(X, degree):
 	return np.power(X, degree)
 
@@ -77,9 +77,8 @@ def gaussian_basis(X, N, width_factor=2.0):
 # Streamlit app
 def main():
 	st.title("Neural Network Visualization")
-	st.sidebar.header("Settings")
+	st.sidebar.header("Tune Nueral Network")
 	
-	# Select dataset
 	dataset_name = st.sidebar.selectbox("Choose a dataset", list(datasets.keys()))
 	X_init, y = datasets[dataset_name]
 	# print(X.shape, y.shape)
@@ -92,9 +91,9 @@ def main():
 		'X2^2': lambda x: polyTransform(x[:, 1], 2),
 		'Sin(X1)': lambda x: sin_basis(x[:, 0]),
 		'Sin(X2)': lambda x: sin_basis(x[:, 1]),
-		'Gaussian': lambda x: gaussian_basis(x, 5)
+		# 'Gaussian': lambda x: gaussian_basis(x, 5)
 	}
-	selected_basis = st.sidebar.multiselect("Select Basis Functions", basis_functions.keys(), default=['X1', 'X2'])
+	selected_basis = st.sidebar.multiselect("Select Basis Functions", list(basis_functions.keys()) + ['Gaussian'], default=['Gaussian'])
 	
 	# Hyperparameter controls
 	layer_sizes = st.sidebar.text_input("Layer Sizes (comma-separated)", "3,3,3")
@@ -104,34 +103,35 @@ def main():
 	epochs = st.sidebar.slider("Epochs", 10, 500, 40, 10)
 	batch_size = st.sidebar.slider("Batch Size", 1, 30, 10, 1)
 	test_size = st.sidebar.slider("Test Size", 0.0, 1.0, 0.2, 0.05)
+	activation = st.sidebar.selectbox("Activation Function", ["tanh", "relu", "logistic"])
+	
 	mc_dropout = st.sidebar.checkbox("MC Dropout", value=False)
 	dropout_val = 0.2
 	if mc_dropout:
 		dropout_val = st.sidebar.slider("Dropout", 0.0, 0.5, 0.2, 0.05)
 
 
-	# activation = st.sidebar.selectbox("Activation Function", ["tanh", "relu", "logistic"])
-	
-	trainBtn = st.sidebar.button("Train Model")
 	# Button to start training
+	trainBtn = st.sidebar.button("Train Model")
 	if trainBtn:
 		basis = [basis_functions[basis] for basis in selected_basis  if basis != "Gaussian"]
 		X = np.array([basis_function(X_init) for basis_function in basis]).T
+		print(X.shape)
 		if "Gaussian" in selected_basis:
-			print("Gaussian")
-			temp = gaussian_basis(X_init, 5)
-			X = np.concatenate([X, temp], axis=1)
+			if X.shape[0] == 0:
+				X = gaussian_basis(X_init, 5)
+			else:
+				X = np.concatenate([X, gaussian_basis(X_init, 5)], axis=1)
+			print(X.shape)
 		stdScale = StandardScaler().fit(X)
 		X = stdScale.transform(X)
 
-		# X = np.concatenate([basis_function(X_init) for basis_function in basis], axis=0)
-		print(X.shape)
-		model = NeuralNetwork(hidden_layers=layer_sizes, learning_rate=learning_rate, batch_size=batch_size, epochs=epochs, input_size=X.shape[1], mc_dropout=mc_dropout, dropout_rate=dropout_val)
+
+		model = NeuralNetwork(hidden_layers=layer_sizes, learning_rate=learning_rate, batch_size=batch_size, epochs=epochs, input_size=X.shape[1], activation=activation, mc_dropout=mc_dropout, dropout_rate=dropout_val)
+
 		X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
 		history = model.train(X_train, y_train)
 		loss, accuracy = model.test(X_test, y_test)
-		st.write(f"Accuracy: {accuracy:.2f}")
-		st.write(f"Loss: {loss:.2f}")
 
 		
 		# Train the neural network
@@ -147,25 +147,31 @@ def main():
 		X_contour_init = np.c_[xx.ravel(), yy.ravel()];
 		X_contour = np.array([fnc(X_contour_init) for fnc in basis]).T
 		if "Gaussian" in selected_basis:
-			temp = gaussian_basis(X_contour_init, 5)
-			X_contour = np.concatenate([X_contour, temp], axis=1)
+			if X_contour.shape[0] == 0:
+				X_contour = gaussian_basis(X_contour_init, 5)
+			else:
+				X_contour = np.concatenate([X_contour, gaussian_basis(X_contour_init, 5)], axis=1)
 		X_contour = stdScale.transform(X_contour)
-		print(X_contour.shape)
+		
 		# Z = model.model.predict(X_contour)
 		Z = np.array([model.model(X_contour, training=True).numpy()[:,1] for _ in range(30)]).T.mean(axis=1)
-		print(Z.shape)
-		# Z = np.hstack([model.model(X_contour, training=True) for _ in range(30)]).mean(axis=1)
 		Z = Z.reshape(xx.shape)
 		
 		# Plot the contour
 		st.write(f"### Dataset: {dataset_name}")
 		plt.figure(figsize=(8, 6))
 		plt.contourf(xx, yy, Z, alpha=0.8, cmap=plt.cm.coolwarm)
+		plt.colorbar()
 		plt.scatter(X_init[:, 0], X_init[:, 1], c=y, edgecolors='k', cmap=plt.cm.coolwarm)
 		plt.xlabel('Feature 1')
 		plt.ylabel('Feature 2')
 		plt.title('Probability Contour')
 		st.pyplot(plt)
+
+		# Print the loss and accuracy
+		st.write(f"Accuracy: {accuracy:.2f}")
+		st.write(f"Loss: {loss:.2f}")
+
 		
 		# Print model weights and intercepts
 		st.write("Model Weights:")
@@ -182,19 +188,6 @@ def main():
 
 			# if isinstance(layer, tf.keras.layers.Dropout):  # Handle dropout layers separately
 				# st.write(f"Dropout rate for Layer {layer.name}: {layer.rate}")
-
-
-		# Show accuracy
-		# y_pred = model.predict(X_test)
-		# accuracy = accuracy_score(y_test, y_pred)
-		# st.write(f"Accuracy: {accuracy:.2f}")
-
-		# st.write("### Model Weights")
-		# for i, (weight, intercept) in enumerate(zip(model.coefs_, model.intercepts_)):
-		# 	st.write(f"Layer {i+1}:")
-		# 	st.write(weight)
-		# 	st.write(intercept)
-		# 	st.write("")
 
 if __name__ == "__main__":
 	main()
