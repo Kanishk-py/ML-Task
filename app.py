@@ -5,8 +5,7 @@ import tensorflow as tf
 from sklearn.datasets import make_moons, make_circles, make_classification
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-import tensorflow as tf
-import numpy as np
+import tensorflow as t
 
 class MCDropout(tf.keras.layers.Dropout):
   def call(self, inputs):
@@ -93,7 +92,7 @@ def main():
 		'Sin(X2)': lambda x: sin_basis(x[:, 1]),
 		# 'Gaussian': lambda x: gaussian_basis(x, 5)
 	}
-	selected_basis = st.sidebar.multiselect("Select Basis Functions", list(basis_functions.keys()) + ['Gaussian'], default=['Gaussian'])
+	selected_basis = st.sidebar.multiselect("Select Basis Functions", list(basis_functions.keys()) + ['Gaussian'], default=['X1', 'X2'])
 	
 	# Hyperparameter controls
 	layer_sizes = st.sidebar.text_input("Layer Sizes (comma-separated)", "3,3,3")
